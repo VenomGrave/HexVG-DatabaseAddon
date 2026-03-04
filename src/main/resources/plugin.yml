@@ -1,0 +1,28 @@
+name: HexVG-DatabaseAddon
+version: 1.0.0
+main: com.venomgrave.hexvg.HexVGDatabaseAddon
+api-version: "1.21"
+description: A Skript addon for MySQL and SQLite database management
+author: VenomGrave
+website: https://github.com/venomgrave/HexVG-DatabaseAddon
+
+depend:
+  - Skript
+
+softdepend:
+  - HexVG-Core
+
+commands:
+  hexdb:
+    description: Main command for HexVG-DatabaseAddon
+    usage: /hexdb <reload|status|migrate <source> <target>>
+    permission: hexvg.admin
+    permission-message: "&cYou don't have permission to use this command."
+
+permissions:
+  hexvg.admin:
+    description: Access to admin commands (/hexvg reload, /hexvg status)
+    default: op
+  hexvg.database.use:
+    description: Permission to use database syntax in Skript
+    default: op

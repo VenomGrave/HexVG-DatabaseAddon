@@ -1,0 +1,52 @@
+# HexVG-DatabaseAddon Configuration
+
+language: "en" # en | pl
+
+storage:
+  type: mysql # sqlite | mysql
+
+  sqlite:
+    file: "skript.db"
+
+  mysql:
+    host: "127.0.0.1"
+    port: 3306
+    database: "HexVG"
+    username: "root"
+    password: ""
+    pool:
+      maximumPoolSize: 10
+      minimumIdle: 1
+      connectionTimeoutMs: 10000
+      idleTimeoutMs: 600000
+      maxLifetimeMs: 1800000
+
+# Cache wyników SELECT
+# Zapobiega wielokrotnemu odpytywaniu bazy o te same dane
+cache:
+  enabled: true
+  ttl-ms: 5000 # Czas życia wpisu w cache (ms). 5000 = 5 sekund
+
+# Kolejka zapytań SQL
+# Chroni bazę przed przeciążeniem przy wielu graczach
+queue:
+  enabled: true
+  max-size: 500 # Maksymalna liczba zapytań czekających w kolejce
+
+
+# Bezpieczenstwo - kontrola nad surowymi zapytaniami SQL
+security:
+  allow-raw-write: true
+  allow-raw-read: true
+  max-rows: 1000
+  query-timeout-seconds: 10
+
+debug:
+  enabled: false
+  log-to-file: true
+  log-file: "logs/hexvg-db-debug.log"
+
+reconnect:
+  enabled: true
+  interval-seconds: 30
+  max-attempts: 5
