@@ -1,0 +1,107 @@
+# ============================================================
+# HexVG-DatabaseAddon - przykład: system coinów
+# Wymaga: SQLite (domyślnie) lub MySQL w config.yml
+# ============================================================
+
+on skript load:
+    # Krok 1: odpala async sprawdzenie tabeli (fire-and-forget)
+    check db table "players"
+    # Krok 2: czekamy aż async wróci z wynikiem
+    wait 5 ticks
+    if db table "players" doesn't exist:
+        # CREATE TABLE też jest async - nie blokuje serwera
+        execute db query "CREATE TABLE IF NOT EXISTS players (uuid VARCHAR(36) PRIMARY KEY, name VARCHAR(16), coins INT DEFAULT 0)"
+        wait 5 ticks
+        # Odświeżamy cache po utworzeniu tabeli
+        check db table "players"
+
+on join:
+    set {_uuid} to "%uuid of player%"
+
+    # SELECT - fire-and-forget, wynik trafia do cache
+    execute db query "SELECT * FROM players WHERE uuid = ?" with values {_uuid}
+    wait 2 ticks
+
+    if db row count of last db query result = 0:
+        set {_cols::1} to "uuid"
+        set {_cols::2} to "name"
+        set {_cols::3} to "coins"
+        set {_vals::1} to {_uuid}
+        set {_vals::2} to player's name
+        set {_vals::3} to "0"
+        db insert into table "players" columns {_cols::*} values {_vals::*}
+        send "&aWitaj po raz pierwszy, %player's name%!" to player
+    else:
+        set {_dbname} to column "name" from row 1 of last db query result
+        if {_dbname} is set:
+            if {_dbname} is not player's name:
+                db update table "players" set "name" to player's name where "uuid" = {_uuid}
+
+command /coins [<player>]:
+    trigger:
+        if arg-1 is not set:
+            set {_uuid} to "%uuid of player%"
+            execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+            wait 2 ticks
+            if db row count of last db query result > 0:
+                set {_coins} to column "coins" from row 1 of last db query result
+                send "&eCoiny: &f%{_coins}%" to player
+            else:
+                send "&cBrak danych w bazie." to player
+        else:
+            if player doesn't have permission "coins.check.other":
+                send "&cBrak uprawnien." to player
+                stop
+            set {_uuid} to "%uuid of arg-1%"
+            execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+            wait 2 ticks
+            if db row count of last db query result > 0:
+                set {_coins} to column "coins" from row 1 of last db query result
+                send "&e%arg-1% ma &f%{_coins}% coinow." to player
+            else:
+                send "&cGracz nie znaleziony w bazie." to player
+
+command /addcoins <player> <integer>:
+    permission: coins.admin
+    trigger:
+        if arg-2 <= 0:
+            send "&cPodaj liczbe wieksza niz 0." to player
+            stop
+        set {_uuid} to "%uuid of arg-1%"
+        execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+        if db row count of last db query result = 0:
+            send "&cGracz %arg-1% nie znaleziony w bazie." to player
+            stop
+        set {_current} to column "coins" from row 1 of last db query result
+        set {_new} to {_current} + arg-2
+        db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
+        send "&aDodano &f%arg-2% &acoinow dla %arg-1%. Nowy stan: &f%{_new}%." to player
+        if arg-1 is online:
+            send "&aTwoje coiny zostaly zaktualizowane: &f%{_new}%." to arg-1
+
+command /topcoins:
+    trigger:
+        execute db query "SELECT name, coins FROM players ORDER BY coins DESC LIMIT 10"
+        wait 2 ticks
+        set {_rows} to db row count of last db query result
+        if {_rows} = 0:
+            send "&cBrak danych." to player
+            stop
+        send "&e--- Top %{_rows}% graczy ---" to player
+        loop {_rows} times:
+            set {_name} to column "name" from row loop-number of last db query result
+            set {_c} to column "coins" from row loop-number of last db query result
+            send "&7%loop-number%. &f%{_name}% &e- %{_c}% coinow" to player
+
+command /resetcoins <player>:
+    permission: coins.admin
+    trigger:
+        set {_uuid} to "%uuid of arg-1%"
+        execute db query "SELECT uuid FROM players WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+        if db row count of last db query result = 0:
+            send "&cGracz %arg-1% nie znaleziony w bazie." to player
+            stop
+        db update table "players" set "coins" to "0" where "uuid" = {_uuid}
+        send "&aZresetowano coiny gracza %arg-1%." to player
