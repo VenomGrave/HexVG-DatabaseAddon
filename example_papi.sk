@@ -1,0 +1,194 @@
+# =====================================================
+# HexVG-DatabaseAddon — PlaceholderAPI example
+# Requires: HexVG-DatabaseAddon, PlaceholderAPI
+# Requires: a plugin that displays placeholders
+#           e.g. TAB, FeatherBoard, CMI, HolographicDisplays
+#
+# Available placeholders after running this script:
+#   %hexvgdb_coins%   — player's coin balance
+#   %hexvgdb_kills%   — player's kill count
+#   %hexvgdb_rank%    — player's rank
+# =====================================================
+
+on skript load:
+    # db ensure table blocks until the table exists — no race conditions, no wait ticks needed
+    db ensure table "stats" with query "CREATE TABLE IF NOT EXISTS stats (uuid VARCHAR(36) PRIMARY KEY, name VARCHAR(16), coins INT DEFAULT 0, kills INT DEFAULT 0, rank VARCHAR(32) DEFAULT 'Newcomer')"
+
+# =====================================================
+# On join — load player data and set placeholders
+# =====================================================
+
+on join:
+    set {_uuid} to "%uuid of player%"
+
+    execute db query "SELECT * FROM stats WHERE uuid = ?" with values {_uuid}
+    wait 2 ticks
+
+    if db row count of last db query result = 0:
+        # New player — insert default row
+        set {_cols::1} to "uuid"
+        set {_cols::2} to "name"
+        set {_cols::3} to "coins"
+        set {_cols::4} to "kills"
+        set {_cols::5} to "rank"
+        set {_vals::1} to {_uuid}
+        set {_vals::2} to player's name
+        set {_vals::3} to "0"
+        set {_vals::4} to "0"
+        set {_vals::5} to "Newcomer"
+        db insert into table "stats" columns {_cols::*} values {_vals::*}
+
+        # Set placeholders to defaults right away
+        db set placeholder "coins" to "0" for player
+        db set placeholder "kills" to "0" for player
+        db set placeholder "rank" to "Newcomer" for player
+    else:
+        # Returning player — load values and push to PAPI
+        set {_coins} to column "coins" from row 1 of last db query result
+        set {_kills} to column "kills" from row 1 of last db query result
+        set {_rank}  to column "rank"  from row 1 of last db query result
+
+        db set placeholder "coins" to "%{_coins}%" for player
+        db set placeholder "kills" to "%{_kills}%" for player
+        db set placeholder "rank"  to "%{_rank}%"  for player
+
+        # Update name in case it changed
+        set {_dbname} to column "name" from row 1 of last db query result
+        if {_dbname} is not player's name:
+            db update table "stats" set "name" to player's name where "uuid" = {_uuid}
+
+# =====================================================
+# /addcoins <player> <amount> — add coins and refresh placeholder
+# =====================================================
+
+command /addcoins <player> <integer>:
+    permission: stats.admin
+    trigger:
+        set {_uuid} to "%uuid of arg-1%"
+
+        execute db query "SELECT coins FROM stats WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+
+        if db row count of last db query result = 0:
+            send "&cPlayer not found in database." to sender
+            stop
+
+        set {_current} to column "coins" from row 1 of last db query result
+        set {_new} to {_current} + arg-2
+        db update table "stats" set "coins" to "%{_new}%" where "uuid" = {_uuid}
+        wait 2 ticks
+
+        # Refresh placeholder if player is online
+        if arg-1 is online:
+            db set placeholder "coins" to "%{_new}%" for arg-1
+            send "&aYour coins were updated to &f%{_new}%&a." to arg-1
+
+        send "&aAdded &f%arg-2% coins &ato &f%arg-1%&a. New balance: &f%{_new}%." to sender
+
+# =====================================================
+# On kill — increment kill counter and update rank
+# =====================================================
+
+on death of player:
+    if attacker is a player:
+        set {_uuid} to "%uuid of attacker%"
+
+        execute db query "SELECT kills FROM stats WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+
+        if db row count of last db query result = 0:
+            stop
+
+        set {_kills} to column "kills" from row 1 of last db query result
+        set {_kills} to {_kills} + 1
+
+        # Determine rank based on kill count
+        set {_rank} to "Newcomer"
+        if {_kills} >= 10:
+            set {_rank} to "Fighter"
+        if {_kills} >= 50:
+            set {_rank} to "Warrior"
+        if {_kills} >= 150:
+            set {_rank} to "Veteran"
+        if {_kills} >= 500:
+            set {_rank} to "Legend"
+
+        db begin transaction
+
+        db update table "stats" set "kills" to "%{_kills}%" where "uuid" = {_uuid}
+        wait 2 ticks
+        db update table "stats" set "rank" to {_rank} where "uuid" = {_uuid}
+        wait 2 ticks
+
+        db commit transaction
+
+        if last db transaction failed:
+            stop
+
+        # Refresh placeholders for the killer
+        db set placeholder "kills" to "%{_kills}%" for attacker
+        db set placeholder "rank"  to {_rank}       for attacker
+
+        send "&7Your kill count: &f%{_kills}% &8| &7Rank: &f%{_rank}%" to attacker
+
+# =====================================================
+# /stats [player] — show stats from database
+# =====================================================
+
+command /stats [<player>]:
+    trigger:
+        if arg-1 is not set:
+            set {_target} to player
+        else:
+            if player doesn't have permission "stats.check.other":
+                send "&cYou don't have permission to check other players." to player
+                stop
+            set {_target} to arg-1
+
+        set {_uuid} to "%uuid of {_target}%"
+
+        execute db query "SELECT * FROM stats WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+
+        if db row count of last db query result = 0:
+            send "&cNo data found for &f%{_target}%&c." to player
+            stop
+
+        set {_name}   to column "name"   from row 1 of last db query result
+        set {_coins}  to column "coins"  from row 1 of last db query result
+        set {_kills}  to column "kills"  from row 1 of last db query result
+        set {_rank}   to column "rank"   from row 1 of last db query result
+
+        send "                                " to player
+        send "  &b&lStats &8— &7%{_name}%" to player
+        send "                                " to player
+        send "  &7Coins  &8» &f%{_coins}%" to player
+        send "  &7Kills  &8» &f%{_kills}%" to player
+        send "  &7Rank   &8» &f%{_rank}%" to player
+        send "                                " to player
+
+# =====================================================
+# /topkills — leaderboard top 10 by kills
+# =====================================================
+
+command /topkills:
+    trigger:
+        execute db query "SELECT name, kills, rank FROM stats ORDER BY kills DESC LIMIT 10"
+        wait 2 ticks
+
+        set {_rows} to db row count of last db query result
+        if {_rows} = 0:
+            send "&cNo data yet." to player
+            stop
+
+        send "                                " to player
+        send "  &b&lTop 10 &8— &7Kills" to player
+        send "                                " to player
+
+        loop {_rows} times:
+            set {_name}  to column "name"  from row loop-number of last db query result
+            set {_kills} to column "kills" from row loop-number of last db query result
+            set {_rank}  to column "rank"  from row loop-number of last db query result
+            send "  &8%loop-number%. &f%{_name}% &8— &7%{_kills}% kills &8| &7%{_rank}%" to player
+
+        send "                                " to player
