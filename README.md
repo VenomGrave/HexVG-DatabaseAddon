@@ -1,21 +1,31 @@
 # HexVG-DatabaseAddon
 
+> Skript addon for database operations on the **VenomGrave** server
 
-HexVG-DatabaseAddon is a Skript addon built for the VenomGrave server. Me and a friend spent quite a bit of time working on this — a lot of effort went into making everything work properly, especially the asynchronous query handling. At some point we had to rewrite the entire architecture to get rid of deadlocks that were causing the server to freeze while waiting for database responses.
 
-The plugin lets you write Skript scripts that communicate with a MySQL or SQLite database without any knowledge of Java. All the connection handling, HikariCP connection pooling and error management is done on the plugin side — in Skript you just write what you want to do with the data.
+---
+
+## About
+
+HexVG-DatabaseAddon is a Skript addon built for the VenomGrave server. A lot of work went into making the async architecture solid — at some point we had to rewrite the entire query system to eliminate deadlocks that were freezing the server while waiting for database responses.
+
+The plugin lets you write Skript scripts that communicate with a MySQL or SQLite database without any Java knowledge. Connection handling, HikariCP pooling, error management, transaction rollbacks, player locking and table creation are all handled on the plugin side — in Skript you just write what you want to do with the data.
 
 ---
 
 ## Features
 
 - **MySQL** and **SQLite** support
-- Fully **asynchronous** queries — the server never freezes waiting for the database
+- Fully **asynchronous** queries — the server never freezes
+- **Transaction support** with automatic rollback on failure
+- **Player lock system** — prevents race conditions from duplicate command calls
+- **Guaranteed table creation** — `db ensure table` blocks until the table exists, no race conditions on startup
+- **PlaceholderAPI integration** — expose database values to scoreboards, tablists, holograms
 - **SQL injection** protection via PreparedStatement
 - Table and column name validation
 - Per-player **result cache**
 - **Debug mode** with query logging and execution time
-- Clean and readable Skript syntax
+- All libraries shaded inside the jar — no extra dependencies required
 
 ---
 
@@ -26,8 +36,7 @@ The plugin lets you write Skript scripts that communicate with a MySQL or SQLite
 | Paper | 1.16.5+ |
 | Skript | 2.6+ |
 | Java | 11+ |
-
-No additional libraries needed on the server side — HikariCP, sqlite-jdbc and mysql-connector are all shaded inside the jar.
+| PlaceholderAPI | optional |
 
 ---
 
@@ -37,6 +46,8 @@ No additional libraries needed on the server side — HikariCP, sqlite-jdbc and 
 2. Start the server — the plugin will generate `config.yml`
 3. Configure your database connection
 4. Restart the server
+
+> When using MySQL, make sure to create the database beforehand: `CREATE DATABASE your_database;`
 
 ---
 
@@ -60,11 +71,18 @@ database:
     pool-size: 5
 ```
 
-> When using MySQL, make sure to create the database manually beforehand: `CREATE DATABASE your_database;`
-
 ---
 
 ## Skript Syntax
+
+### Create a table (recommended)
+
+Blocks until the table exists — safe to use in `on skript load`, no `wait ticks` needed, no race conditions even when multiple players join at once.
+
+```skript
+on skript load:
+    db ensure table "players" with query "CREATE TABLE IF NOT EXISTS players (uuid VARCHAR(36) PRIMARY KEY, name VARCHAR(16), coins INT DEFAULT 0)"
+```
 
 ### Execute a query
 
@@ -72,17 +90,16 @@ database:
 execute db query "SELECT * FROM players WHERE uuid = ?" with values {_uuid}
 wait 2 ticks
 set {_coins} to column "coins" from row 1 of last db query result
+set {_rows} to db row count of last db query result
 ```
 
 ### Insert a record
 
 ```skript
 set {_cols::1} to "uuid"
-set {_cols::2} to "name"
-set {_cols::3} to "coins"
+set {_cols::2} to "coins"
 set {_vals::1} to {_uuid}
-set {_vals::2} to player's name
-set {_vals::3} to "0"
+set {_vals::2} to "0"
 db insert into table "players" columns {_cols::*} values {_vals::*}
 ```
 
@@ -98,21 +115,68 @@ db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
 db delete from table "players" where "uuid" = {_uuid}
 ```
 
-### Check if a table exists
+### Transactions
+
+Multiple queries executed as one atomic operation. If anything fails, everything is automatically rolled back.
 
 ```skript
-check db table "players"
-wait 20 ticks
-if db table "players" doesn't exist:
-    execute db query "CREATE TABLE IF NOT EXISTS players (...)"
+db begin transaction
+
+db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
+wait 2 ticks
+db insert into table "purchases" columns {_cols::*} values {_vals::*}
+wait 2 ticks
+
+db commit transaction
+
+if last db transaction failed:
+    send "&cSomething went wrong. Your coins were not taken." to player
+    stop
+
+send "&aPurchase successful!" to player
 ```
 
-### Read query results
+> `db begin transaction` and `db commit transaction` do not require a `wait` — they block internally until the operation completes.
+
+### Player lock
+
+Prevents a player from triggering the same command multiple times before the previous execution finishes.
 
 ```skript
-set {_rows} to db row count of last db query result
-set {_name} to column "name" from row 1 of last db query result
+if player is db locked:
+    send "&cPlease wait before using this command again." to player
+    stop
+db lock player
+
+# ... your queries ...
+
+db unlock player
 ```
+
+### PlaceholderAPI
+
+If PlaceholderAPI is installed, the expansion registers automatically. Set values from Skript after a query and they become available as placeholders anywhere on the server.
+
+```skript
+execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+wait 2 ticks
+set {_coins} to column "coins" from row 1 of last db query result
+db set placeholder "coins" to "%{_coins}%" for player
+```
+
+| Placeholder | Description |
+|---|---|
+| `%hexvgdb_<key>%` | value set via `db set placeholder` |
+| `%hexvgdb_connected%` | `true` / `false` — database connection status |
+| `%hexvgdb_locked%` | `true` / `false` — whether the player has an active lock |
+
+---
+
+## Important — wait ticks
+
+All regular queries run asynchronously, so you need to give the database a moment before reading the result. `wait 2 ticks` is enough for regular queries.
+
+`db ensure table`, `db begin transaction` and `db commit transaction` do **not** require a wait — they block internally.
 
 ---
 
@@ -124,26 +188,20 @@ set {_name} to column "name" from row 1 of last db query result
 | `/hexvgdb debug` | Toggles debug mode on/off | `hexvg.database.admin` |
 | `/hexvgdb reload` | Reloads the configuration | `hexvg.database.admin` |
 
----
-
-## Important — wait ticks
-
-Since all queries run asynchronously, you need to give the database a moment to respond before reading the result. In practice `wait 2 ticks` is enough for regular queries, and `wait 20 ticks` is recommended when checking tables on server startup.
-
-```skript
-execute db query "SELECT ..."
-wait 2 ticks               # give the async query time to complete
-set {_val} to column "..." from row 1 of last db query result
-```
+Default permission: **op only**
 
 ---
 
-## Example Script
+## Example Scripts
 
-The repository includes an `example.sk` file with a ready-to-use coin system that demonstrates all plugin features — table creation, SELECT, INSERT, UPDATE, DELETE and player commands.
+The repository includes two example scripts:
+
+- `example.sk` — coin system with SELECT, INSERT, UPDATE, DELETE, transactions and player locking
+- `example_papi.sk` — stats system (coins, kills, rank) with full PlaceholderAPI integration
 
 ---
 
 ## Authors
 
-Built for the **VenomGrave** server by the HexVG team.
+Built for the **VenomGrave** server by the HexVG team.  
+Issues and suggestions: https://github.com/VenomGrave/HexVG-DatabaseAddon/issues
