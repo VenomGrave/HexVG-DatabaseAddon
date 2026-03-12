@@ -1,28 +1,25 @@
 # ============================================================
-# HexVG-DatabaseAddon - przykład: system coinów
-# Wymaga: SQLite (domyślnie) lub MySQL w config.yml
+# HexVG-DatabaseAddon - coin system example
+# Requires: HexVG-DatabaseAddon
+# Optional: PlaceholderAPI
 # ============================================================
 
 on skript load:
-    # Krok 1: odpala async sprawdzenie tabeli (fire-and-forget)
-    check db table "players"
-    # Krok 2: czekamy aż async wróci z wynikiem
-    wait 5 ticks
-    if db table "players" doesn't exist:
-        # CREATE TABLE też jest async - nie blokuje serwera
-        execute db query "CREATE TABLE IF NOT EXISTS players (uuid VARCHAR(36) PRIMARY KEY, name VARCHAR(16), coins INT DEFAULT 0)"
-        wait 5 ticks
-        # Odświeżamy cache po utworzeniu tabeli
-        check db table "players"
+    db ensure table "players" with query "CREATE TABLE IF NOT EXISTS players (uuid VARCHAR(36) PRIMARY KEY, name VARCHAR(16), coins INT DEFAULT 0)"
+    db ensure table "purchases" with query "CREATE TABLE IF NOT EXISTS purchases (id INT AUTO_INCREMENT PRIMARY KEY, uuid VARCHAR(36), item VARCHAR(64), bought_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+
+# ============================================================
+# On join — load player data
+# ============================================================
 
 on join:
     set {_uuid} to "%uuid of player%"
 
-    # SELECT - fire-and-forget, wynik trafia do cache
     execute db query "SELECT * FROM players WHERE uuid = ?" with values {_uuid}
     wait 2 ticks
 
     if db row count of last db query result = 0:
+        # New player — insert with default values
         set {_cols::1} to "uuid"
         set {_cols::2} to "name"
         set {_cols::3} to "coins"
@@ -30,12 +27,20 @@ on join:
         set {_vals::2} to player's name
         set {_vals::3} to "0"
         db insert into table "players" columns {_cols::*} values {_vals::*}
-        send "&aWitaj po raz pierwszy, %player's name%!" to player
+        send "&aWelcome for the first time, &f%player's name%&a!" to player
     else:
+        # Update name if changed
         set {_dbname} to column "name" from row 1 of last db query result
-        if {_dbname} is set:
-            if {_dbname} is not player's name:
-                db update table "players" set "name" to player's name where "uuid" = {_uuid}
+        if {_dbname} is not player's name:
+            db update table "players" set "name" to player's name where "uuid" = {_uuid}
+
+        # Push coins to PlaceholderAPI if installed
+        set {_coins} to column "coins" from row 1 of last db query result
+        db set placeholder "coins" to "%{_coins}%" for player
+
+# ============================================================
+# /coins [player] — check coin balance
+# ============================================================
 
 command /coins [<player>]:
     trigger:
@@ -43,65 +48,178 @@ command /coins [<player>]:
             set {_uuid} to "%uuid of player%"
             execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
             wait 2 ticks
-            if db row count of last db query result > 0:
-                set {_coins} to column "coins" from row 1 of last db query result
-                send "&eCoiny: &f%{_coins}%" to player
-            else:
-                send "&cBrak danych w bazie." to player
+            if db row count of last db query result = 0:
+                send "&cYour account was not found." to player
+                stop
+            set {_coins} to column "coins" from row 1 of last db query result
+            send "&eYour balance: &f%{_coins}% coins" to player
         else:
             if player doesn't have permission "coins.check.other":
-                send "&cBrak uprawnien." to player
+                send "&cYou don't have permission to check other players." to player
                 stop
             set {_uuid} to "%uuid of arg-1%"
             execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
             wait 2 ticks
-            if db row count of last db query result > 0:
-                set {_coins} to column "coins" from row 1 of last db query result
-                send "&e%arg-1% ma &f%{_coins}% coinow." to player
-            else:
-                send "&cGracz nie znaleziony w bazie." to player
+            if db row count of last db query result = 0:
+                send "&c%arg-1% was not found in the database." to player
+                stop
+            set {_coins} to column "coins" from row 1 of last db query result
+            send "&f%arg-1% &ehas &f%{_coins}% coins." to player
+
+# ============================================================
+# /addcoins <player> <amount> — add coins to a player
+# ============================================================
 
 command /addcoins <player> <integer>:
     permission: coins.admin
     trigger:
-        if arg-2 <= 0:
-            send "&cPodaj liczbe wieksza niz 0." to player
-            stop
         set {_uuid} to "%uuid of arg-1%"
+
         execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
         wait 2 ticks
+
         if db row count of last db query result = 0:
-            send "&cGracz %arg-1% nie znaleziony w bazie." to player
+            send "&cPlayer not found in database." to sender
             stop
+
         set {_current} to column "coins" from row 1 of last db query result
         set {_new} to {_current} + arg-2
+
         db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
-        send "&aDodano &f%arg-2% &acoinow dla %arg-1%. Nowy stan: &f%{_new}%." to player
+        wait 2 ticks
+
         if arg-1 is online:
-            send "&aTwoje coiny zostaly zaktualizowane: &f%{_new}%." to arg-1
+            db set placeholder "coins" to "%{_new}%" for arg-1
+            send "&aAn admin added &f%arg-2% coins&a to your account. New balance: &f%{_new}%." to arg-1
+
+        send "&aAdded &f%arg-2% coins &ato &f%arg-1%&a. New balance: &f%{_new}%." to sender
+
+# ============================================================
+# /removecoins <player> <amount> — remove coins from a player
+# ============================================================
+
+command /removecoins <player> <integer>:
+    permission: coins.admin
+    trigger:
+        set {_uuid} to "%uuid of arg-1%"
+
+        execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+
+        if db row count of last db query result = 0:
+            send "&cPlayer not found in database." to sender
+            stop
+
+        set {_current} to column "coins" from row 1 of last db query result
+        if {_current} < arg-2:
+            send "&c%arg-1% only has &f%{_current}% coins&c, cannot remove &f%arg-2%&c." to sender
+            stop
+
+        set {_new} to {_current} - arg-2
+        db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
+        wait 2 ticks
+
+        if arg-1 is online:
+            db set placeholder "coins" to "%{_new}%" for arg-1
+            send "&cAn admin removed &f%arg-2% coins&c from your account. New balance: &f%{_new}%." to arg-1
+
+        send "&aRemoved &f%arg-2% coins &afrom &f%arg-1%&a. New balance: &f%{_new}%." to sender
+
+# ============================================================
+# /topcoins — leaderboard top 10
+# ============================================================
 
 command /topcoins:
     trigger:
         execute db query "SELECT name, coins FROM players ORDER BY coins DESC LIMIT 10"
         wait 2 ticks
+
         set {_rows} to db row count of last db query result
         if {_rows} = 0:
-            send "&cBrak danych." to player
+            send "&cNo data yet." to player
             stop
-        send "&e--- Top %{_rows}% graczy ---" to player
+
+        send "                                        " to player
+        send "  &b&lTop 10 &8— &7Coins" to player
+        send "                                        " to player
         loop {_rows} times:
-            set {_name} to column "name" from row loop-number of last db query result
-            set {_c} to column "coins" from row loop-number of last db query result
-            send "&7%loop-number%. &f%{_name}% &e- %{_c}% coinow" to player
+            set {_name}  to column "name"  from row loop-number of last db query result
+            set {_coins} to column "coins" from row loop-number of last db query result
+            send "  &8%loop-number%. &f%{_name}% &8— &7%{_coins}% coins" to player
+        send "                                        " to player
+
+# ============================================================
+# /resetcoins <player> — reset coins to 0
+# ============================================================
 
 command /resetcoins <player>:
     permission: coins.admin
     trigger:
         set {_uuid} to "%uuid of arg-1%"
-        execute db query "SELECT uuid FROM players WHERE uuid = ?" with values {_uuid}
-        wait 2 ticks
-        if db row count of last db query result = 0:
-            send "&cGracz %arg-1% nie znaleziony w bazie." to player
-            stop
         db update table "players" set "coins" to "0" where "uuid" = {_uuid}
-        send "&aZresetowano coiny gracza %arg-1%." to player
+        wait 2 ticks
+
+        if arg-1 is online:
+            db set placeholder "coins" to "0" for arg-1
+            send "&cYour coins were reset to 0 by an admin." to arg-1
+
+        send "&aReset &f%arg-1%&a's coins to 0." to sender
+
+# ============================================================
+# /buy — buy a Magic Diamond for 100 coins
+# Uses a transaction — both the coin deduction and purchase
+# record are saved together or not at all
+# ============================================================
+
+command /buy:
+    trigger:
+        # Block duplicate executions while this one is running
+        if player is db locked:
+            send "&cPlease wait before using this command again." to player
+            stop
+        db lock player
+
+        set {_uuid} to "%uuid of player%"
+        set {_item} to "diamond"
+        set {_price} to 100
+
+        execute db query "SELECT coins FROM players WHERE uuid = ?" with values {_uuid}
+        wait 2 ticks
+
+        if db row count of last db query result = 0:
+            send "&cYour account was not found." to player
+            db unlock player
+            stop
+
+        set {_coins} to column "coins" from row 1 of last db query result
+        if {_coins} < {_price}:
+            send "&cNot enough coins. You need &f%{_price}%&c, you have &f%{_coins}%&c." to player
+            db unlock player
+            stop
+
+        # Begin transaction — both queries must succeed together
+        db begin transaction
+
+        set {_new} to {_coins} - {_price}
+        db update table "players" set "coins" to "%{_new}%" where "uuid" = {_uuid}
+        wait 2 ticks
+
+        set {_cols::1} to "uuid"
+        set {_cols::2} to "item"
+        set {_vals::1} to {_uuid}
+        set {_vals::2} to {_item}
+        db insert into table "purchases" columns {_cols::*} values {_vals::*}
+        wait 2 ticks
+
+        db commit transaction
+
+        # Release lock
+        db unlock player
+
+        if last db transaction failed:
+            send "&cSomething went wrong. Your coins were not taken." to player
+            stop
+
+        give player 1 of diamond named "&bMagic Diamond"
+        db set placeholder "coins" to "%{_new}%" for player
+        send "&aYou received &bMagic Diamond &afor &f%{_price}% coins&a. Remaining: &f%{_new}%." to player
