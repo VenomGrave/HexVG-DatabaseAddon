@@ -8,10 +8,9 @@ import ch.njol.skript.lang.util.SimpleExpression;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
 import com.venomgrave.hexvg.database.database.QueryResult;
+import com.venomgrave.hexvg.database.skript.SkriptEvents;
 import com.venomgrave.hexvg.database.util.TypeNormalizer;
-import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
 
 import java.util.UUID;
 
@@ -42,11 +41,7 @@ public class ExprColumnValue extends SimpleExpression<Object> {
 
         int rowIndex = rowNum.intValue() - 1;
 
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
+        UUID uuid = SkriptEvents.playerUuid(event);
 
         QueryResult result = HexVGAddon.getInstance().getResultCache().get(uuid);
         if (result == null) return new Object[0];

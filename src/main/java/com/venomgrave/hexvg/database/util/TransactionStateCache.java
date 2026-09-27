@@ -13,7 +13,9 @@ public class TransactionStateCache {
     private static final UUID GLOBAL = new UUID(0, 0);
 
     public static void setFailed(UUID uuid, boolean value) {
-        failed.put(uuid != null ? uuid : GLOBAL, value);
+        // Only failures are stored — keeps the map from growing with every player.
+        if (value) failed.put(uuid != null ? uuid : GLOBAL, true);
+        else failed.remove(uuid != null ? uuid : GLOBAL);
     }
 
     public static boolean hasFailed(UUID uuid) {

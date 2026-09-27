@@ -5,10 +5,9 @@ import ch.njol.skript.lang.Condition;
 import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
 import ch.njol.util.Kleenean;
+import com.venomgrave.hexvg.database.skript.SkriptEvents;
 import com.venomgrave.hexvg.database.util.TransactionStateCache;
-import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
 
 import java.util.UUID;
 
@@ -29,11 +28,7 @@ public class CondTransactionFailed extends Condition {
 
     @Override
     public boolean check(Event event) {
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
+        UUID uuid = SkriptEvents.playerUuid(event);
 
         boolean failed = TransactionStateCache.hasFailed(uuid);
         return isNegated() != failed;

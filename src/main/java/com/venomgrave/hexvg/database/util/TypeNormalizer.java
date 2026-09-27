@@ -12,7 +12,9 @@ public final class TypeNormalizer {
             if (bd.scale() <= 0) return bd.longValue();
             return bd.doubleValue();
         }
-        if (value instanceof Integer) return ((Integer) value).longValue();
+        if (value instanceof Integer || value instanceof Short || value instanceof Byte) {
+            return ((Number) value).longValue();
+        }
         if (value instanceof Float) return ((Float) value).doubleValue();
         return value;
     }

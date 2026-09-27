@@ -8,9 +8,8 @@ import ch.njol.skript.lang.util.SimpleExpression;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
 import com.venomgrave.hexvg.database.database.QueryResult;
-import org.bukkit.entity.Player;
+import com.venomgrave.hexvg.database.skript.SkriptEvents;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
 
 import java.util.UUID;
 
@@ -29,11 +28,7 @@ public class ExprRowCount extends SimpleExpression<Long> {
 
     @Override
     protected Long[] get(Event event) {
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
+        UUID uuid = SkriptEvents.playerUuid(event);
 
         QueryResult result = HexVGAddon.getInstance().getResultCache().get(uuid);
         if (result == null) return new Long[]{0L};

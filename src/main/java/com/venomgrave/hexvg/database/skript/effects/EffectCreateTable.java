@@ -6,26 +6,23 @@ import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
+import com.venomgrave.hexvg.database.database.QueryExecutor;
+import com.venomgrave.hexvg.database.util.SqlIdentifiers;
 import com.venomgrave.hexvg.database.util.TableExistsCache;
 import org.bukkit.event.Event;
-import org.bukkit.plugin.java.JavaPlugin;
-
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
-import java.sql.ResultSet;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /**
  * db ensure table %string% with query %string%
  *
  * Checks if the table exists and creates it if it doesn't.
- * Blocks until the operation completes — no "wait X ticks" needed.
+ * Blocks until the operation completes (max 10 s) — no "wait X ticks" needed.
  *
  * Example:
  *   db ensure table "players" with query "CREATE TABLE IF NOT EXISTS players (uuid VARCHAR(36) PRIMARY KEY, coins INT DEFAULT 0)"
  */
 public class EffectCreateTable extends Effect {
+
+    private static final long TIMEOUT_MS = 10_000;
 
     static {
         Skript.registerEffect(EffectCreateTable.class,
@@ -48,38 +45,24 @@ public class EffectCreateTable extends Effect {
     protected void execute(Event event) {
         String table = tableExpr.getSingle(event);
         String query = queryExpr.getSingle(event);
-        if (table == null || query == null) return;
+        if (!SqlIdentifiers.isValid(table)) {
+            Skript.warning("[HexVG-DatabaseAddon] Invalid table name for ensure table: " + table);
+            return;
+        }
+        if (query == null || query.trim().isEmpty()) {
+            Skript.warning("[HexVG-DatabaseAddon] Missing CREATE query for table: " + table);
+            return;
+        }
+        HexVGAddon addon = HexVGAddon.getInstance();
+        if (addon == null || addon.getQueryExecutor() == null) return;
 
-        final JavaPlugin plugin = HexVGAddon.getInstance();
-        CountDownLatch latch = new CountDownLatch(1);
-
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            try (Connection conn = HexVGAddon.getInstance().getDatabaseManager().getConnection()) {
-                // Check if table already exists
-                DatabaseMetaData meta = conn.getMetaData();
-                try (ResultSet rs = meta.getTables(null, null, table, new String[]{"TABLE"})) {
-                    if (rs.next()) {
-                        TableExistsCache.put(table, true);
-                        return; // already exists
-                    }
-                }
-                // Create the table
-                try (var stmt = conn.prepareStatement(query)) {
-                    stmt.executeUpdate();
-                }
-                TableExistsCache.put(table, true);
-                HexVGAddon.getInstance().getDebugLogger().log("[CREATE TABLE] Created table: " + table);
-            } catch (Exception e) {
-                HexVGAddon.getInstance().getDebugLogger().log("[CREATE TABLE] Failed: " + e.getMessage());
-            } finally {
-                latch.countDown();
-            }
-        });
-
+        QueryExecutor executor = addon.getQueryExecutor();
         try {
-            latch.await(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            executor.callBlocking(() -> executor.ensureTable(table, query), TIMEOUT_MS);
+            TableExistsCache.put(table, true);
+        } catch (Exception e) {
+            TableExistsCache.invalidate(table);
+            Skript.warning("[HexVG-DatabaseAddon] Failed to ensure table '" + table + "': " + e.getMessage());
         }
     }
 

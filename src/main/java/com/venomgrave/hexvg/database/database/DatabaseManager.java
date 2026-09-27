@@ -29,7 +29,8 @@ public class DatabaseManager {
         debug.log("[DB INIT] Type selected: " + type.name());
 
         HikariConfig hikari = new HikariConfig();
-        hikari.setConnectionTimeout(10000);
+        // Below QueryExecutor.EFFECT_TIMEOUT_MS so a busy pool surfaces as an error, not a hang.
+        hikari.setConnectionTimeout(4000);
         hikari.setIdleTimeout(600000);
         hikari.setMaxLifetime(1800000);
         hikari.setPoolName("HexVGDatabase-Pool");
@@ -49,7 +50,7 @@ public class DatabaseManager {
             hikari.setMaximumPoolSize(Math.max(1, Math.min(poolSize, 20)));
             hikari.setMinimumIdle(1);
             hikari.setJdbcUrl("jdbc:mysql://" + host + ":" + port + "/" + database
-                    + "?useSSL=false&characterEncoding=UTF-8&autoReconnect=true");
+                    + "?useSSL=false&characterEncoding=UTF-8");
             hikari.setUsername(username);
             hikari.setPassword(password);
             hikari.addDataSourceProperty("cachePrepStmts", "true");
@@ -90,6 +91,10 @@ public class DatabaseManager {
             throw new SQLException("DataSource is not initialized or has been closed.");
         }
         return dataSource.getConnection();
+    }
+
+    public int getPoolSize() {
+        return dataSource != null ? dataSource.getMaximumPoolSize() : 1;
     }
 
     public DatabaseType getType() {

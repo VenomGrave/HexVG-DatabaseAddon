@@ -12,11 +12,13 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.sql.SQLException;
+import java.util.UUID;
 
 public class HexVGAddon extends JavaPlugin implements Listener, CommandExecutor {
 
@@ -50,7 +52,8 @@ public class HexVGAddon extends JavaPlugin implements Listener, CommandExecutor 
         }
 
         this.transactionManager = new TransactionManager(databaseManager, debugLogger);
-        this.queryExecutor = new QueryExecutor(databaseManager, transactionManager, debugLogger, this);
+        this.queryExecutor = new QueryExecutor(databaseManager, transactionManager, debugLogger,
+                databaseManager.getPoolSize() + 1);
         this.commandCooldown = new CommandCooldown();
         this.placeholderCache = new PlaceholderCache();
 
@@ -64,6 +67,11 @@ public class HexVGAddon extends JavaPlugin implements Listener, CommandExecutor 
         }
 
         getServer().getPluginManager().registerEvents(this, this);
+
+        // Roll back transactions a script left open (stop/error before commit) so they
+        // don't hold a pooled connection — with SQLite (pool of 1) that would stall all queries.
+        getServer().getScheduler().runTaskTimerAsynchronously(this,
+                transactionManager::expireStale, 20L, 20L);
 
         if (getCommand("hexvgdb") != null) {
             getCommand("hexvgdb").setExecutor(this);
@@ -96,6 +104,7 @@ public class HexVGAddon extends JavaPlugin implements Listener, CommandExecutor 
     @Override
     public void onDisable() {
         if (transactionManager != null) transactionManager.closeAll();
+        if (queryExecutor != null) queryExecutor.shutdown();
         if (resultCache != null) resultCache.clear();
         if (databaseManager != null) databaseManager.close();
         instance = null;
@@ -183,10 +192,13 @@ public class HexVGAddon extends JavaPlugin implements Listener, CommandExecutor 
         }
     }
 
-    @EventHandler
+    // MONITOR: runs after Skript's own "on quit" triggers, so results they store are cleared too.
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(PlayerQuitEvent event) {
-        resultCache.invalidate(event.getPlayer().getUniqueId());
-        placeholderCache.invalidate(event.getPlayer().getUniqueId());
+        UUID uuid = event.getPlayer().getUniqueId();
+        resultCache.invalidate(uuid);
+        placeholderCache.invalidate(uuid);
+        queryExecutor.abortTransactionAsync(uuid, "Player quit");
     }
 
     public static HexVGAddon getInstance() {

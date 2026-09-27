@@ -6,14 +6,11 @@ import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
-import org.bukkit.entity.Player;
+import com.venomgrave.hexvg.database.database.TransactionManager.CommitStatus;
+import com.venomgrave.hexvg.database.skript.SkriptEvents;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class EffectCommitTransaction extends Effect {
 
@@ -30,33 +27,20 @@ public class EffectCommitTransaction extends Effect {
 
     @Override
     protected void execute(Event event) {
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
+        HexVGAddon addon = HexVGAddon.getInstance();
+        if (addon == null || addon.getQueryExecutor() == null) return;
 
-        final UUID finalUuid = uuid;
-        final JavaPlugin plugin = HexVGAddon.getInstance();
-
-        CountDownLatch latch = new CountDownLatch(1);
-
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            try {
-                boolean success = HexVGAddon.getInstance()
-                        .getTransactionManager().commit(finalUuid);
-                if (!success) {
-                    Skript.warning("[HexVG-DatabaseAddon] No active transaction to commit for: " + finalUuid);
-                }
-            } finally {
-                latch.countDown();
-            }
-        });
-
+        UUID uuid = SkriptEvents.playerUuid(event);
         try {
-            latch.await(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            CommitStatus status = addon.getQueryExecutor().commitTransaction(uuid);
+            if (status == CommitStatus.NO_TRANSACTION) {
+                Skript.warning("[HexVG-DatabaseAddon] No active transaction to commit for: "
+                        + (uuid != null ? uuid : "GLOBAL"));
+            } else if (status == CommitStatus.ROLLED_BACK) {
+                Skript.warning("[HexVG-DatabaseAddon] Transaction was rolled back - changes discarded.");
+            }
+        } catch (Exception e) {
+            Skript.warning("[HexVG-DatabaseAddon] Commit failed: " + e.getMessage());
         }
     }
 

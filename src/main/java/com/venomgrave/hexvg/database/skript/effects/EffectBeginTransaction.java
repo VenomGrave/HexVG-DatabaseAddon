@@ -4,17 +4,22 @@ import ch.njol.skript.Skript;
 import ch.njol.skript.lang.Effect;
 import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
+import ch.njol.skript.lang.TriggerItem;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
-import org.bukkit.entity.Player;
+import com.venomgrave.hexvg.database.skript.SkriptEvents;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
+/**
+ * db begin transaction
+ *
+ * Blocks until the transaction connection is open (max 5 s). If the transaction can't
+ * be started (one is already active for this player, DB error, timeout) the rest of the
+ * trigger is NOT executed — otherwise its writes would run outside a transaction or
+ * inside another trigger's transaction (double-spend).
+ */
 public class EffectBeginTransaction extends Effect {
 
     static {
@@ -30,42 +35,29 @@ public class EffectBeginTransaction extends Effect {
 
     @Override
     protected void execute(Event event) {
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
+        begin(event);
+    }
 
-        final UUID finalUuid = uuid;
-        final JavaPlugin plugin = HexVGAddon.getInstance();
+    @Override
+    protected TriggerItem walk(Event event) {
+        if (!begin(event)) return null; // stop the trigger
+        return getNext();
+    }
 
-        // Use a latch so Skript waits until the connection is actually open
-        // before proceeding to the next query inside the transaction.
-        // Max wait: 5 seconds.
-        CountDownLatch latch = new CountDownLatch(1);
+    private boolean begin(Event event) {
+        HexVGAddon addon = HexVGAddon.getInstance();
+        if (addon == null || addon.getQueryExecutor() == null) return false;
 
-        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-            try {
-                boolean started = HexVGAddon.getInstance()
-                        .getTransactionManager().begin(finalUuid);
-                if (!started) {
-                    Skript.warning("[HexVG-DatabaseAddon] Transaction already active for: " + finalUuid);
-                }
-            } catch (Exception e) {
-                Skript.warning("[HexVG-DatabaseAddon] Failed to begin transaction: " + e.getMessage());
-            } finally {
-                latch.countDown();
-            }
-        });
-
+        UUID uuid = SkriptEvents.playerUuid(event);
         try {
-            // Block the Skript thread (which is already async after "wait X ticks")
-            // until the connection is ready. This is safe because Skript's
-            // wait effect already moves execution off the main server thread.
-            latch.await(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            if (addon.getQueryExecutor().beginTransaction(uuid)) return true;
+            Skript.warning("[HexVG-DatabaseAddon] Transaction already active for: "
+                    + (uuid != null ? uuid : "GLOBAL") + " - trigger stopped.");
+        } catch (Exception e) {
+            Skript.warning("[HexVG-DatabaseAddon] Failed to begin transaction: " + e.getMessage()
+                    + " - trigger stopped.");
         }
+        return false;
     }
 
     @Override

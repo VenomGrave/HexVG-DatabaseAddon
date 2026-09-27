@@ -6,6 +6,7 @@ import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
 import ch.njol.util.Kleenean;
 import com.venomgrave.hexvg.database.HexVGAddon;
+import com.venomgrave.hexvg.database.util.SqlIdentifiers;
 import com.venomgrave.hexvg.database.util.TableExistsCache;
 import org.bukkit.event.Event;
 
@@ -31,7 +32,7 @@ public class CondTableExists extends Condition {
     @Override
     public boolean check(Event event) {
         String table = tableExpr.getSingle(event);
-        if (table == null || !table.matches("[a-zA-Z0-9_]+")) return isNegated();
+        if (!SqlIdentifiers.isValid(table)) return isNegated();
 
         Boolean cached = TableExistsCache.get(table);
         if (cached == null) {

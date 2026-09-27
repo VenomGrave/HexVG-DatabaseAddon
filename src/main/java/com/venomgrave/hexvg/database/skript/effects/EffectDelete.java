@@ -5,12 +5,8 @@ import ch.njol.skript.lang.Effect;
 import ch.njol.skript.lang.Expression;
 import ch.njol.skript.lang.SkriptParser;
 import ch.njol.util.Kleenean;
-import com.venomgrave.hexvg.database.HexVGAddon;
-import org.bukkit.entity.Player;
+import com.venomgrave.hexvg.database.util.SqlIdentifiers;
 import org.bukkit.event.Event;
-import org.bukkit.event.player.PlayerEvent;
-
-import java.util.UUID;
 
 public class EffectDelete extends Effect {
 
@@ -39,34 +35,19 @@ public class EffectDelete extends Effect {
         String whereCol = whereColumnExpr.getSingle(event);
         String whereValue = whereValueExpr.getSingle(event);
 
-        if (table == null || !table.matches("[a-zA-Z0-9_]+")) {
-            Skript.warning("[HexVG-DatabaseAddon] Invalid table name for DELETE: " + table);
+        if (!SqlIdentifiers.isValid(table)) {
+            QueryEffects.fail(event, "[HexVG-DatabaseAddon] Invalid table name for DELETE: " + table);
             return;
         }
-        if (whereCol == null || !whereCol.matches("[a-zA-Z0-9_]+")) {
-            Skript.warning("[HexVG-DatabaseAddon] Invalid WHERE column for DELETE: " + whereCol);
+        if (!SqlIdentifiers.isValid(whereCol)) {
+            QueryEffects.fail(event, "[HexVG-DatabaseAddon] Invalid WHERE column for DELETE: " + whereCol);
             return;
         }
 
         String sql = "DELETE FROM " + table + " WHERE " + whereCol + " = ?";
         String[] params = {whereValue};
 
-        UUID uuid = null;
-        if (event instanceof PlayerEvent) {
-            Player p = ((PlayerEvent) event).getPlayer();
-            if (p != null) uuid = p.getUniqueId();
-        }
-
-        final UUID finalUuid = uuid;
-
-        HexVGAddon.getInstance().getQueryExecutor().executeAsync(sql, params, finalUuid,
-                (result, error) -> {
-                    if (error != null) {
-                        Skript.warning("[HexVG-DatabaseAddon] DELETE failed: " + error.getMessage());
-                        return;
-                    }
-                    HexVGAddon.getInstance().getResultCache().store(finalUuid, result);
-                });
+        QueryEffects.runAndStore(event, sql, params, "DELETE", null);
     }
 
     @Override
