@@ -2,7 +2,7 @@
 
 > Addon do Skripta obsługujący operacje bazodanowe na serwerze **VenomGrave**
 
-🇵🇱 Polski | [🇬🇧 English](README-EN.md)
+🇵🇱 Polski | [🇬🇧 English](README.md)
 
 ![version](https://img.shields.io/badge/wersja-1.2.0-blue)
 ![paper](https://img.shields.io/badge/Paper-1.21.x%20%7C%2026.x-green)
